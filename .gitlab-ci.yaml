@@ -1,0 +1,83 @@
+image: "saclient:latest"
+
+# The options to sevSecGw are highIssues, mediumIssues, lowIssues and totalIssues
+# maxIssuesAllowed is the amount of issues in selected sevSecGw
+
+variables:
+  sevSecGw: totalIssues
+  maxIssuesAllowed: 200
+  appKey: $ASOC_KEY
+  appSecret: $ASOC_SECRET
+  appID: $APP_ID
+
+stages:
+  - scan-sast
+  
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+
+scan-job:
+  stage: scan-sast
+  script:
+  # Generate IRX files based on source root folder downloaded by Gitlab
+  - appscan.sh prepare
+  # Authenticate in ASoC
+  - appscan.sh api_login -u $appKey -P $appSecret -persist
+  # Upload IRX file to ASoC to be analyzed and receive scanId
+  - appscan.sh queue_analysis -a $appID >> output.txt
+  - cat output.txt
+  - scanId=$(sed -n '2p' output.txt)
+  # Check scanId for scan status to be Ready
+  - >
+    for x in $(seq 1 1000)
+      do
+        resultScan=$(appscan.sh status -i $scanId)
+        echo $resultScan 
+        if [ "$resultScan" == "Ready" ]
+          then break 
+        fi
+        sleep 60
+      done
+  # Get report from ASoC
+  - appscan.sh get_result -i $scanId -t html
+  # Get scan summary and determine if 
+  - appscan.sh info -i $scanId > scanStatus.txt
+  - highIssues=$(cat scanStatus.txt | grep LatestExecution | grep -oP '(?<="NHighIssues":)[^,]*')
+  - mediumIssues=$(cat scanStatus.txt | grep LatestExecution | grep -oP '(?<="NMediumIssues":)[^,]*')
+  - lowIssues=$(cat scanStatus.txt | grep LatestExecution | grep -oP '(?<="NLowIssues":)[^,]*')
+  - totalIssues=$(cat scanStatus.txt | grep LatestExecution | grep -oP '(?<="NIssuesFound":)[^,]*')
+  - >
+    if [ "$highIssues" -gt "$maxIssuesAllowed" ] && [ "$sevSecGw" == "highIssues" ]
+      then
+        echo "There are $highIssues high issues, $mediumIssues medium issues and $lowIssues low issues"
+        echo "The company policy permits less than $maxIssuesAllowed $sevSecGw severity"
+        echo "Failed"
+        exit 1
+    elif [ "$mediumIssues" -gt "$maxIssuesAllowed" ] && [ "$sevSecGw" == "mediumIssues" ]
+      then
+        echo "There are $highIssues high issues, $mediumIssues medium issues and $lowIssues low issues"
+        echo "The company policy permits less than $maxIssuesAllowed $sevSecGw severity"
+        echo "Failed"
+        exit 1
+    elif [ "$lowIssues" -gt "$maxIssuesAllowed" ] && [ "$sevSecGw" == "lowIssues" ]
+      then
+        echo "There are $highIssues high issues, $mediumIssues medium issues and $lowIssues low issues"
+        echo "The company policy permits less than $maxIssuesAllowed $sevSecGw severity"
+        echo "Failed"
+        exit 1
+    elif [ "$totalIssues" -gt "$maxIssuesAllowed" ] && [ "$sevSecGw" == "totalIssues" ]
+      then
+        echo "There are $highIssues high issues, $mediumIssues medium issues and $lowIssues low issues"
+        echo "The company policy permits less than $maxIssuesAllowed $sevSecGw severity"
+        echo "Failed"
+        exit 1
+    fi
+  - echo "There are $highIssues high issues, $mediumIssues medium issues and $lowIssues low issues"
+  - echo "The company policy permits less than $maxIssuesAllowed $sevSecGw severity"
+  - echo "Passed"
+  
+  artifacts:
+    when: always
+    paths:
+      - "*.html"
